@@ -6,6 +6,11 @@ on:
       - main
       - develop
 
+
+permissions:
+  pull-requests: write
+
+
 jobs:
   assign-reviewer:
     runs-on: ubuntu-latest
