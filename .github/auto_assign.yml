@@ -3,7 +3,7 @@ reviewers:
   - yunabyte
   - Mason-P-ark
 
-addAssignees: true
+addAssignees: false
 assignees:
   - yunabyte
   - Mason-P-ark
