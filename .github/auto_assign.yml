@@ -3,7 +3,4 @@ reviewers:
   - yunabyte
   - Mason-P-ark
 
-addAssignees: true
-assignees:
-  - yunabyte
-  - Mason-P-ark
+addAssignees: false
