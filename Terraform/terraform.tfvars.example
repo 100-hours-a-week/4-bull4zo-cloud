@@ -1,0 +1,4 @@
+project_id  = "moa-prod2"
+region      = "asia-northeast3"
+zone        = "asia-northeast3-c"
+environment = "prod"
