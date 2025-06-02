@@ -54,7 +54,7 @@ resource "google_compute_firewall" "allow_web_services" {
 
   allow {
     protocol = "tcp"
-    ports    = ["80", "443", "8000", "8080", "9090", "3000"]
+    ports    = ["80", "443", "8000", "8080", "9090", "3000", "3100"]
   }
 
   source_ranges = ["0.0.0.0/0"]
@@ -96,9 +96,7 @@ resource "google_compute_instance" "vm_instance" {
   network_interface {
     subnetwork = google_compute_subnetwork.subnet.id
     network_ip = "192.168.10.3"
-    access_config {
-      nat_ip = google_compute_address.vm_static_ip.address
-    }
+    # Removed access_config to make VM private (no external IP)
   }
 }
 
@@ -107,13 +105,6 @@ resource "google_storage_bucket_iam_member" "public_access" {
   bucket = google_storage_bucket.static_website.name
   role   = "roles/storage.objectViewer"
   member = "allUsers"
-}
-
-# Static external IP address for AI server
-resource "google_compute_address" "ai_static_ip" {
-  name         = "moa-ai-ec2-${var.environment}-elasticip"
-  region       = var.region
-  address_type = "EXTERNAL"
 }
 
 # AI Server Instance with GPU
@@ -133,9 +124,7 @@ resource "google_compute_instance" "ai_instance" {
   network_interface {
     subnetwork = google_compute_subnetwork.subnet.id
     network_ip = "192.168.10.5"
-    access_config {
-      nat_ip = google_compute_address.ai_static_ip.address
-    }
+    # Removed access_config to make VM private (no external IP)
   }
 
   guest_accelerator {
@@ -205,28 +194,28 @@ resource "google_compute_global_forwarding_rule" "frontend_http_forwarding_rule"
 }
 
 # SSL certificate for frontend HTTPS
-# Uncomment and configure when you have a certificate
-# resource "google_compute_ssl_certificate" "frontend_certificate" {
-#   name        = "moa-fe-ssl-cert-${var.environment}"
-#   private_key = file("path/to/private.key")
-#   certificate = file("path/to/certificate.crt")
-# }
+resource "google_compute_managed_ssl_certificate" "frontend_certificate" {
+  name = "moa-fe-ssl-cert-${var.environment}"
+  
+  managed {
+    domains = ["moagenda.com"]
+  }
+}
 
 # HTTPS proxy for frontend
-# resource "google_compute_target_https_proxy" "frontend_https_proxy" {
-#   name             = "moa-fe-https-proxy-${var.environment}"
-#   url_map          = google_compute_url_map.frontend_url_map.id
-#   ssl_certificates = ["projects/PROJECT_ID/global/sslCertificates/moa-fe-ssl-cert-${var.environment}"]
-#   # Replace PROJECT_ID with your actual project ID
-# }
+resource "google_compute_target_https_proxy" "frontend_https_proxy" {
+  name             = "moa-fe-https-proxy-${var.environment}"
+  url_map          = google_compute_url_map.frontend_url_map.id
+  ssl_certificates = [google_compute_managed_ssl_certificate.frontend_certificate.id]
+}
 
 # HTTPS forwarding rule for frontend
-# resource "google_compute_global_forwarding_rule" "frontend_https_forwarding_rule" {
-#   name       = "moa-fe-https-rule-${var.environment}"
-#   target     = google_compute_target_https_proxy.frontend_https_proxy.id
-#   port_range = "443"
-#   ip_address = google_compute_global_address.frontend_lb_ip.address
-# }
+resource "google_compute_global_forwarding_rule" "frontend_https_forwarding_rule" {
+  name       = "moa-fe-https-rule-${var.environment}"
+  target     = google_compute_target_https_proxy.frontend_https_proxy.id
+  port_range = "443"
+  ip_address = google_compute_global_address.frontend_lb_ip.address
+}
 
 # Backend Load Balancer Configuration
 
@@ -297,25 +286,61 @@ resource "google_compute_global_forwarding_rule" "backend_http_forwarding_rule" 
 }
 
 # SSL certificate for backend HTTPS
-# Uncomment and configure when you have a certificate
-# resource "google_compute_ssl_certificate" "backend_certificate" {
-#   name        = "moa-be-ssl-cert-${var.environment}"
-#   private_key = file("path/to/private.key")
-#   certificate = file("path/to/certificate.crt")
-# }
+resource "google_compute_managed_ssl_certificate" "backend_certificate" {
+  name = "moa-be-ssl-cert-${var.environment}"
+  
+  managed {
+    domains = ["backend.moagenda.com"]
+  }
+}
 
 # HTTPS proxy for backend
-#resource "google_compute_target_https_proxy" "backend_https_proxy" {
-#  name             = "moa-be-https-proxy-${var.environment}"
-#  url_map          = google_compute_url_map.backend_url_map.id
-#  ssl_certificates = ["projects/PROJECT_ID/global/sslCertificates/moa-be-ssl-cert-${var.environment}"]
-#  # Replace PROJECT_ID with your actual project ID
-#}
+resource "google_compute_target_https_proxy" "backend_https_proxy" {
+  name             = "moa-be-https-proxy-${var.environment}"
+  url_map          = google_compute_url_map.backend_url_map.id
+  ssl_certificates = [google_compute_managed_ssl_certificate.backend_certificate.id]
+}
 
 # HTTPS forwarding rule for backend
-#resource "google_compute_global_forwarding_rule" "backend_https_forwarding_rule" {
-#  name       = "moa-be-https-rule-${var.environment}"
-#  target     = google_compute_target_https_proxy.backend_https_proxy.id
-#  port_range = "443"
-#  ip_address = google_compute_global_address.backend_lb_ip.address
-#}
+resource "google_compute_global_forwarding_rule" "backend_https_forwarding_rule" {
+  name       = "moa-be-https-rule-${var.environment}"
+  target     = google_compute_target_https_proxy.backend_https_proxy.id
+  port_range = "443"
+  ip_address = google_compute_global_address.backend_lb_ip.address
+}
+
+# Database Server Instance
+resource "google_compute_instance" "db_instance" {
+  name         = "moa-db-ec2-${var.environment}"
+  machine_type = "e2-small"
+  zone         = "asia-northeast3-c"
+  tags         = ["mysql", "db"]
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      size  = 30
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet.id
+    network_ip = "192.168.10.10"  # Fixed internal IP
+  }
+}
+
+# Storage bucket for image uploads
+resource "google_storage_bucket" "image_bucket" {
+  name          = "moa-image-bucket-${var.environment}"
+  location      = var.region
+  force_destroy = true
+  
+  uniform_bucket_level_access = true
+
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "POST", "PUT"]
+    response_header = ["Content-Type", "x-goog-meta-*"]
+    max_age_seconds = 3600
+  }
+}
