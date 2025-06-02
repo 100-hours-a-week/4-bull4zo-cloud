@@ -79,13 +79,6 @@ resource "google_compute_firewall" "allow_http_https_health" {
   ]
 }
 
-# Static external IP address
-resource "google_compute_address" "vm_static_ip" {
-  name         = "moa-be-ec2-${var.environment}-elasticip"
-  region       = var.region
-  address_type = "EXTERNAL"
-}
-
 # Compute Instance
 resource "google_compute_instance" "vm_instance" {
   name         = "moa-be-ec2-${var.environment}"
