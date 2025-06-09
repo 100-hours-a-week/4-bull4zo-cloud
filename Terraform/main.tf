@@ -43,7 +43,7 @@ resource "google_compute_firewall" "allow_ssh_mysql" {
     ports    = ["22", "3306"]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["192.168.0.0/16"]
   target_tags   = ["ssh", "mysql"]
 }
 
@@ -57,7 +57,7 @@ resource "google_compute_firewall" "allow_web_services" {
     ports    = ["80", "443", "8000", "8080", "9090", "3000", "3100"]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["192.168.0.0/16"]
   target_tags   = ["web", "api"]
 }
 
@@ -73,7 +73,7 @@ resource "google_compute_firewall" "allow_http_https_health" {
 
   # Allow Google Cloud health checkers
   source_ranges = [
-    "0.0.0.0/0",
+    "192.168.0.0/16",
     "130.211.0.0/22",    # Google Cloud Load Balancer health checks
     "35.191.0.0/16"      # Google Cloud health checks
   ]
@@ -198,7 +198,11 @@ resource "google_compute_managed_ssl_certificate" "frontend_certificate" {
   name = "moa-fe-ssl-cert-${var.environment}"
   
   managed {
+<<<<<<< HEAD
     domains = ["moagenda.com"]
+=======
+    domains = [var.frontend_domain]
+>>>>>>> 1c73605 (방화벽 수정 및 도메인 변수 수정)
   }
 }
 
@@ -256,7 +260,7 @@ resource "google_compute_url_map" "backend_url_map" {
   default_service = google_compute_backend_service.backend_service.id
   
   host_rule {
-    hosts        = ["backend.moagenda.com"]
+    hosts        = [var.backend_domain]
     path_matcher = "backend-paths"
   }
   
@@ -288,9 +292,14 @@ resource "google_compute_global_forwarding_rule" "backend_http_forwarding_rule" 
 # SSL certificate for backend HTTPS
 resource "google_compute_managed_ssl_certificate" "backend_certificate" {
   name = "moa-be-ssl-cert-${var.environment}"
+<<<<<<< HEAD
   
   managed {
     domains = ["backend.moagenda.com"]
+=======
+  managed {
+    domains = [var.backend_domain]
+>>>>>>> 1c73605 (방화벽 수정 및 도메인 변수 수정)
   }
 }
 
@@ -328,6 +337,7 @@ resource "google_compute_instance" "db_instance" {
     network_ip = "192.168.10.10"  # Fixed internal IP
   }
 }
+<<<<<<< HEAD
 
 # Storage bucket for image uploads
 resource "google_storage_bucket" "image_bucket" {
@@ -344,3 +354,5 @@ resource "google_storage_bucket" "image_bucket" {
     max_age_seconds = 3600
   }
 }
+=======
+>>>>>>> 1c73605 (방화벽 수정 및 도메인 변수 수정)
