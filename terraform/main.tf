@@ -1,23 +1,28 @@
-# VPC Network
+# MOA 프로젝트 GCP 인프라 생성 Terraform 코드
+
+
+## 네트워크 설정
+# 서비스용 VPC 생성
 resource "google_compute_network" "vpc" {
   name                    = "moa-main-vpc-${var.environment}"
   auto_create_subnetworks = false
 }
 
-# Subnet
+# 백엔드 서브넷 생성
 resource "google_compute_subnetwork" "subnet" {
-  name          = "moa-pub-sub-${var.environment}-a"
+  name          = "moa-backend-sub-${var.environment}-a"
   ip_cidr_range = "192.168.10.0/24"
   region        = var.region
   network       = google_compute_network.vpc.id
 }
 
-# Storage bucket for static frontend files
+# 정적 배포용 Cloud Storage 버킷 생성
 resource "google_storage_bucket" "static_website" {
   name          = "${var.project_id}-${var.environment}-frontend"
   location      = var.region
   force_destroy = true
 
+# 모든 트래픽을 index.html로 리다이렉트
   website {
     main_page_suffix = "index.html"
     not_found_page   = "index.html"
@@ -32,36 +37,46 @@ resource "google_storage_bucket" "static_website" {
     max_age_seconds = 3600
   }
 }
+# 버킷 공개 접근 설정
+resource "google_storage_bucket_iam_member" "public_access" {
+  bucket = google_storage_bucket.static_website.name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
+}
 
-# Firewall rule for SSH and MySQL
+
+
+
+## 방화벽
+# SSH, MySQL, Redis 방화벽 규칙
 resource "google_compute_firewall" "allow_ssh_mysql" {
   name    = "moa-ssh-sg-${var.environment}"
   network = google_compute_network.vpc.name
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "3306"]
+    ports    = ["22", "3306", "6379"]
   }
 
   source_ranges = ["192.168.0.0/16"]
-  target_tags   = ["ssh", "mysql"]
+  target_tags   = ["ssh", "mysql", "redis"]
 }
 
-# Firewall rule for web services
+# 웹 서비스 및 사용 API 방화벽 규칙
 resource "google_compute_firewall" "allow_web_services" {
   name    = "moa-lb-sg-${var.environment}"
   network = google_compute_network.vpc.name
 
   allow {
     protocol = "tcp"
-    ports    = ["80", "443", "8000", "8080", "9090", "3000", "3100"]
+    ports    = ["80", "443", "8000", "8080", "9090", "3000", "3100", "5601", "8200", "9200", "9300"]
   }
 
   source_ranges = ["192.168.0.0/16"]
   target_tags   = ["web", "api"]
 }
 
-# Firewall rule for HTTP, HTTPS, and health checks
+# HTTP/HTTPS Health Check 방화벽 규칙
 resource "google_compute_firewall" "allow_http_https_health" {
   name    = "moa-http-health-${var.environment}"
   network = google_compute_network.vpc.name
@@ -71,7 +86,7 @@ resource "google_compute_firewall" "allow_http_https_health" {
     ports    = ["80", "443", "8080"]  # Common health check port
   }
 
-  # Allow Google Cloud health checkers
+  # 구글 클라우드 로드 밸런서 헬스 체크를 위한 IP 범위
   source_ranges = [
     "192.168.0.0/16",
     "130.211.0.0/22",    # Google Cloud Load Balancer health checks
@@ -79,7 +94,11 @@ resource "google_compute_firewall" "allow_http_https_health" {
   ]
 }
 
-# Compute Instance
+
+
+
+## 인스턴스 생성
+# 백엔드 서버 인스턴스
 resource "google_compute_instance" "vm_instance" {
   name         = "moa-be-ec2-${var.environment}"
   machine_type = "e2-medium"
@@ -96,18 +115,10 @@ resource "google_compute_instance" "vm_instance" {
   network_interface {
     subnetwork = google_compute_subnetwork.subnet.id
     network_ip = "192.168.10.3"
-    # Removed access_config to make VM private (no external IP)
   }
 }
 
-# Make the bucket publicly accessible
-resource "google_storage_bucket_iam_member" "public_access" {
-  bucket = google_storage_bucket.static_website.name
-  role   = "roles/storage.objectViewer"
-  member = "allUsers"
-}
-
-# AI Server Instance with GPU
+# AI 서버 인스턴스
 resource "google_compute_instance" "ai_instance" {
   name         = "moa-ai-ec2-${var.environment}"
   machine_type = "n1-standard-4"
@@ -124,7 +135,6 @@ resource "google_compute_instance" "ai_instance" {
   network_interface {
     subnetwork = google_compute_subnetwork.subnet.id
     network_ip = "192.168.10.5"
-    # Removed access_config to make VM private (no external IP)
   }
 
   guest_accelerator {
@@ -132,13 +142,53 @@ resource "google_compute_instance" "ai_instance" {
     count = 1
   }
 
-  # Required when using GPUs
+  # GPU 사용을 위해 필요 - 유지보수 시에 인스턴스 종료(정지)
   scheduling {
     on_host_maintenance = "TERMINATE"
   }
 }
 
-# Manual instance group for backend VM
+# DB 서버 인스턴스
+resource "google_compute_instance" "db_instance" {
+  name         = "moa-db-ec2-${var.environment}"
+  machine_type = "e2-small"
+  zone         = "asia-northeast3-c"
+  tags         = ["mysql", "db"]
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      size  = 30
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet.id
+    network_ip = "192.168.10.10"
+  }
+}
+
+# Redis 서버 인스턴스
+resource "google_compute_instance" "redis_instance" {
+  name         = "moa-redis-ec2-${var.environment}"
+  machine_type = "e2-small"
+  zone         = "asia-northeast3-c"
+  tags         = ["redis", "cache"]
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      size  = 30
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet.id
+    network_ip = "192.168.10.15"
+  }
+}
+
+# 백엔드 인스턴스 그룹 생성
 resource "google_compute_instance_group" "backend_group" {
   name        = "moa-be-ec2-group-${var.environment}"
   description = "Backend instance group"
@@ -159,33 +209,35 @@ resource "google_compute_instance_group" "backend_group" {
   }
 }
 
-# Frontend Load Balancer Configuration
 
-# Static IP for frontend load balancer
+
+
+## 프론트엔드 로드 밸런서 설정
+# FE 로드 밸런서 고정 IP 주소
 resource "google_compute_global_address" "frontend_lb_ip" {
   name = "moa-fe-lb-ip-${var.environment}"
 }
 
-# Backend bucket for static website
+# 정적 배포용 백엔드 버킷 설정
 resource "google_compute_backend_bucket" "frontend_bucket" {
   name        = "moa-fe-frontend-backend-${var.environment}"
   bucket_name = google_storage_bucket.static_website.name
   enable_cdn  = true
 }
 
-# URL map for frontend
+# 로드밸런서 URL 맵 설정
 resource "google_compute_url_map" "frontend_url_map" {
   name            = "moa-fe-url-map-${var.environment}"
   default_service = google_compute_backend_bucket.frontend_bucket.id
 }
 
-# HTTP proxy for frontend
+# 프론트엔드 HTTP proxy 
 resource "google_compute_target_http_proxy" "frontend_http_proxy" {
   name    = "moa-fe-http-proxy-${var.environment}"
   url_map = google_compute_url_map.frontend_url_map.id
 }
 
-# HTTP forwarding rule for frontend
+# 프론트엔드 HTTP 포워딩 규칙
 resource "google_compute_global_forwarding_rule" "frontend_http_forwarding_rule" {
   name       = "moa-fe-http-rule-${var.environment}"
   target     = google_compute_target_http_proxy.frontend_http_proxy.id
@@ -193,27 +245,23 @@ resource "google_compute_global_forwarding_rule" "frontend_http_forwarding_rule"
   ip_address = google_compute_global_address.frontend_lb_ip.address
 }
 
-# SSL certificate for frontend HTTPS
+# 프론트엔드 SSL 인증서
 resource "google_compute_managed_ssl_certificate" "frontend_certificate" {
   name = "moa-fe-ssl-cert-${var.environment}"
   
   managed {
-<<<<<<< HEAD
-    domains = ["moagenda.com"]
-=======
     domains = [var.frontend_domain]
->>>>>>> 1c73605 (방화벽 수정 및 도메인 변수 수정)
   }
 }
 
-# HTTPS proxy for frontend
+# 프론트엔드 HTTPS proxy
 resource "google_compute_target_https_proxy" "frontend_https_proxy" {
   name             = "moa-fe-https-proxy-${var.environment}"
   url_map          = google_compute_url_map.frontend_url_map.id
   ssl_certificates = [google_compute_managed_ssl_certificate.frontend_certificate.id]
 }
 
-# HTTPS forwarding rule for frontend
+# 프론트엔드 HTTPS 포워딩 규칙
 resource "google_compute_global_forwarding_rule" "frontend_https_forwarding_rule" {
   name       = "moa-fe-https-rule-${var.environment}"
   target     = google_compute_target_https_proxy.frontend_https_proxy.id
@@ -221,9 +269,16 @@ resource "google_compute_global_forwarding_rule" "frontend_https_forwarding_rule
   ip_address = google_compute_global_address.frontend_lb_ip.address
 }
 
-# Backend Load Balancer Configuration
 
-# Health check for backend service
+
+
+## 백엔드 로드 밸런서 설정
+# 백엔드 고정 IP 주소
+resource "google_compute_global_address" "backend_lb_ip" {
+  name = "moa-be-lb-ip-${var.environment}"
+}
+
+# 백엔드 서비스 헬스체크
 resource "google_compute_health_check" "backend_health_check" {
   name               = "moa-be-ec2-healthcheck-${var.environment}"
   timeout_sec        = 5
@@ -235,7 +290,7 @@ resource "google_compute_health_check" "backend_health_check" {
   }
 }
 
-# Backend service
+# 백엔드 서비스 설정
 resource "google_compute_backend_service" "backend_service" {
   name                  = "moa-be-ec2-service-${var.environment}"
   protocol              = "HTTP"
@@ -249,12 +304,7 @@ resource "google_compute_backend_service" "backend_service" {
   }
 }
 
-# Static IP for backend load balancer
-resource "google_compute_global_address" "backend_lb_ip" {
-  name = "moa-be-lb-ip-${var.environment}"
-}
-
-# URL map for backend
+# 백엔드 URL 맵 설정
 resource "google_compute_url_map" "backend_url_map" {
   name            = "moa-be-url-map-${var.environment}"
   default_service = google_compute_backend_service.backend_service.id
@@ -275,13 +325,13 @@ resource "google_compute_url_map" "backend_url_map" {
   }
 }
 
-# HTTP proxy for backend
+# 백엔드 HTTP 프록시
 resource "google_compute_target_http_proxy" "backend_http_proxy" {
   name    = "moa-be-http-proxy-${var.environment}"
   url_map = google_compute_url_map.backend_url_map.id
 }
 
-# HTTP forwarding rule for backend
+# 백엔드 HTTP 포워딩 규칙
 resource "google_compute_global_forwarding_rule" "backend_http_forwarding_rule" {
   name       = "moa-be-http-rule-${var.environment}"
   target     = google_compute_target_http_proxy.backend_http_proxy.id
@@ -289,70 +339,25 @@ resource "google_compute_global_forwarding_rule" "backend_http_forwarding_rule" 
   ip_address = google_compute_global_address.backend_lb_ip.address
 }
 
-# SSL certificate for backend HTTPS
+# 백엔드 HTTPS SSL 인증서
 resource "google_compute_managed_ssl_certificate" "backend_certificate" {
   name = "moa-be-ssl-cert-${var.environment}"
-<<<<<<< HEAD
-  
-  managed {
-    domains = ["backend.moagenda.com"]
-=======
   managed {
     domains = [var.backend_domain]
->>>>>>> 1c73605 (방화벽 수정 및 도메인 변수 수정)
   }
 }
 
-# HTTPS proxy for backend
+# 백엔드 HTTPS 프록시
 resource "google_compute_target_https_proxy" "backend_https_proxy" {
   name             = "moa-be-https-proxy-${var.environment}"
   url_map          = google_compute_url_map.backend_url_map.id
   ssl_certificates = [google_compute_managed_ssl_certificate.backend_certificate.id]
 }
 
-# HTTPS forwarding rule for backend
+# 백엔드 HTTPS 포워딩 규칙
 resource "google_compute_global_forwarding_rule" "backend_https_forwarding_rule" {
   name       = "moa-be-https-rule-${var.environment}"
   target     = google_compute_target_https_proxy.backend_https_proxy.id
   port_range = "443"
   ip_address = google_compute_global_address.backend_lb_ip.address
 }
-
-# Database Server Instance
-resource "google_compute_instance" "db_instance" {
-  name         = "moa-db-ec2-${var.environment}"
-  machine_type = "e2-small"
-  zone         = "asia-northeast3-c"
-  tags         = ["mysql", "db"]
-
-  boot_disk {
-    initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2204-lts"
-      size  = 30
-    }
-  }
-
-  network_interface {
-    subnetwork = google_compute_subnetwork.subnet.id
-    network_ip = "192.168.10.10"  # Fixed internal IP
-  }
-}
-<<<<<<< HEAD
-
-# Storage bucket for image uploads
-resource "google_storage_bucket" "image_bucket" {
-  name          = "moa-image-bucket-${var.environment}"
-  location      = var.region
-  force_destroy = true
-  
-  uniform_bucket_level_access = true
-
-  cors {
-    origin          = ["*"]
-    method          = ["GET", "POST", "PUT"]
-    response_header = ["Content-Type", "x-goog-meta-*"]
-    max_age_seconds = 3600
-  }
-}
-=======
->>>>>>> 1c73605 (방화벽 수정 및 도메인 변수 수정)

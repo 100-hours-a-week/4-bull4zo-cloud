@@ -8,14 +8,9 @@ output "subnet_id" {
   value       = google_compute_subnetwork.subnet.id
 }
 
-output "instance_name" {
+output "be_instance_name" {
   description = "Name of the VM instance"
   value       = google_compute_instance.vm_instance.name
-}
-
-output "instance_external_ip" {
-  description = "External IP of the VM instance"
-  value       = google_compute_address.vm_static_ip.address
 }
 
 output "instance_group_name" {
@@ -28,19 +23,14 @@ output "ai_instance_name" {
   value       = google_compute_instance.ai_instance.name
 }
 
-output "ai_instance_external_ip" {
-  description = "External IP of the AI VM instance"
-  value       = google_compute_instance.ai_instance.network_interface[0].access_config[0].nat_ip
+output "db_instance_name" {
+  description = "Name of the database instance"
+  value       = google_compute_instance.db_instance.name
 }
 
-output "ai_instance_name" {
-  description = "Name of the AI VM instance"
-  value       = google_compute_instance.ai_instance.name
-}
-
-output "ai_instance_external_ip" {
-  description = "External IP of the AI VM instance"
-  value       = google_compute_address.ai_static_ip.address
+output "redis_instance_name" {
+  description = "Name of the Redis instance"
+  value       = google_compute_instance.redis_instance.name
 }
 
 output "frontend_bucket_name" {
