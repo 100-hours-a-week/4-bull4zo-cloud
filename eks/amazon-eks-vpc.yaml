@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'moa-main-vpc-eks: VPC with NAT for EKS Private Cluster'
+
+Parameters:
+  VpcBlock:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: VPC CIDR
+
+  PublicSubnetBlock:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: Public Subnet for NAT
+
+  PrivateSubnetClusterBlock:
+    Type: String
+    Default: 10.0.101.0/24
+    Description: Private Subnet for EKS Cluster
+
+  PrivateSubnetDbBlock:
+    Type: String
+    Default: 10.0.102.0/24
+    Description: Private Subnet for DB
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: moa-main-vpc-eks
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: moa-igw-eks
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      CidrBlock: 
+        Ref: PublicSubnetBlock
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: 
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: 
+              Ref: AWS::Region
+      Tags:
+        - Key: Name
+          Value: moa-public-subnet-eks
+
+  PrivateSubnetCluster:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      CidrBlock: 
+        Ref: PrivateSubnetClusterBlock
+      AvailabilityZone: 
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: 
+              Ref: AWS::Region
+      Tags:
+        - Key: Name
+          Value: moa-cluster-subnet-eks
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnetDb:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      CidrBlock: 
+        Ref: PrivateSubnetDbBlock
+      AvailabilityZone: 
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: 
+              Ref: AWS::Region
+      Tags:
+        - Key: Name
+          Value: moa-db-subnet-eks
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: moa-public-rt-eks
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+      - Key: Name
+        Value: moa-nat-eip-eks
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+      - Key: Name
+        Value: moa-nat-gw-eks
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: moa-private-rt-eks
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetClusterAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetCluster
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetDbAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetDb
+      RouteTableId: !Ref PrivateRouteTable
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value: !Ref PublicSubnet
+
+  PrivateSubnetClusterId:
+    Description: Private EKS Subnet ID
+    Value: !Ref PrivateSubnetCluster
+
+  PrivateSubnetDbId:
+    Description: Private DB Subnet ID
+    Value: !Ref PrivateSubnetDb
